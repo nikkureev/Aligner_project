@@ -1,25 +1,27 @@
-from Bio import SeqIO
-
-
 file = 'C:/Python/testing_align.txt'
 
 
-def main(file, match, mismatch, gap):
+def main(file, match, mismatch, gap, method):
+
+    if method == 'local':
+        match, mismatch, gap = 1, 0, 0
 
 
     def create_score_matrix(rows, cols):
-        score_matrix = [[0 for i in range(rows)] for j in range(cols)]
+        score_matrix = [[0 for i in range(cols + 1)] for j in range(rows + 1)]
+        score_matrix[0] = [i for i in list(range(cols + 1))]
+        j = 0
+        for k in score_matrix:
+            k[0] = j
+            j += 1
 
-        max_score = 0
         max_pos = None
         for i in range(1, rows):
             for j in range(1, cols):
                 score = calc_score(score_matrix, i, j)
-                if score > max_score:
-                    max_score = score
-                    max_pos = (i, j)
-
                 score_matrix[i][j] = score
+                max_pos = (i, j)
+
         return score_matrix, max_pos
 
 
@@ -27,21 +29,28 @@ def main(file, match, mismatch, gap):
 
         similarity = match if seq_pair[0][x - 1] == seq_pair[1][y - 1] else mismatch
 
-        diag_score = matrix[x - 1][y - 1] + similarity
-        up_score = matrix[x - 1][y] + gap
-        left_score = matrix[x][y - 1] + gap
+        if method == 'local':
+            diag_score = similarity
+            up_score = gap
+            left_score = gap
+        else:
+            diag_score = matrix[x - 1][y - 1] + similarity
+            up_score = matrix[x - 1][y] + gap
+            left_score = matrix[x][y - 1] + gap
 
         return max(0, diag_score, up_score, left_score)
 
 
-    def traceback(score_matrix, start_pos):
+    def global_traceback(score_matrix, start_pos):
 
-        END, DIAG, UP, LEFT = range(4)
+        DIAG, UP, LEFT = range(3)
+
         aligned_seq1 = []
         aligned_seq2 = []
+
         x, y = start_pos
         move = next_move(score_matrix, x, y)
-        while move != END:
+        while x > 0 and y > 0:
             if move == DIAG:
                 aligned_seq1.append(seq_pair[0][x - 1])
                 aligned_seq2.append(seq_pair[1][y - 1])
@@ -58,10 +67,54 @@ def main(file, match, mismatch, gap):
 
             move = next_move(score_matrix, x, y)
 
-        aligned_seq1.append(seq_pair[0][x - 1])
-        aligned_seq2.append(seq_pair[1][y - 1])
+        aligned_seq1.append(seq_pair[0][x])
+        print(seq_pair[0][x - 1], x)
+        aligned_seq2.append(seq_pair[1][y])
+        print(seq_pair[1][y - 1], y)
+        print(aligned_seq2)
+        print(aligned_seq1)
 
         return ''.join(reversed(aligned_seq1)), ''.join(reversed(aligned_seq2))
+
+
+    def local_traceback(score_matrix):
+
+        score_matrix.append([0 for i in range(len(score_matrix[0]))])
+        for lines in score_matrix:
+            lines.append(0)
+
+        aligned_seq1 = []
+        aligned_seq2 = []
+
+        score_matrix.append([0 for i in range(len(score_matrix[0]))])
+        for lines in score_matrix:
+            lines.append(0)
+
+        diag_sum, start_list = [], []
+        for i in range(len(score_matrix)):
+            for j in range(len(score_matrix[i])):
+                if score_matrix[i][j] == 1:
+                    if [i, j] not in start_list:
+                        start_list.append([i, j])
+                        k = 1
+                        local_diag = [[i, j]]
+                        while score_matrix[i + k][j + k] != 0:
+                            start_list.append([i + k, j + k])
+                            local_diag.append([i + k, j + k])
+                            k += 1
+                        diag_sum.append(local_diag)
+
+        longest = []
+        for variants in diag_sum:
+            if len(longest) < len(variants):
+                longest = variants
+
+        for i in longest:
+            aligned_seq1.append(seq_pair[0][i[0] - 1])
+            aligned_seq2.append(seq_pair[1][i[1] - 1])
+
+        return ''.join(aligned_seq1), ''.join(aligned_seq2)
+
 
 
     def next_move(score_matrix, x, y):
@@ -71,13 +124,13 @@ def main(file, match, mismatch, gap):
         left = score_matrix[x][y - 1]
 
         if diag >= up and diag >= left:
-            return 1 if diag != 0 else 0
+            return 0
 
         elif up > diag and up >= left:
-            return 2 if up != 0 else 0
+            return 1
 
         elif left > diag and left > up:
-            return 3 if left != 0 else 0
+            return 2
 
 
     def alignment_string(aligned_seq1, aligned_seq2):
@@ -103,42 +156,41 @@ def main(file, match, mismatch, gap):
         cols = len(sequences[1]) + 1
 
         score_matrix, start_pos = create_score_matrix(rows, cols)
-        seq1_aligned, seq2_aligned = traceback(score_matrix, start_pos)
+        if method == 'local':
+            seq1_aligned, seq2_aligned = local_traceback(score_matrix)
+        else:
+            seq1_aligned, seq2_aligned = global_traceback(score_matrix, start_pos)
+
         alignment_str, idents, gaps, mismatches = alignment_string(seq1_aligned, seq2_aligned)
 
         return seq1_aligned, seq2_aligned, alignment_str, idents, gaps, mismatches
 
+    def fastaParser(infile):
+        seqs = []
+        headers = []
+        with open(infile, 'r') as f:
+            sequence = ""
+            header = None
+            for line in f:
+                if line.startswith('>'):
+                    headers.append(line[1:-1])
+                    if header:
+                        seqs.append(sequence)
+                    sequence = ""
+                    header = line[1:]
+                else:
+                    sequence += line.rstrip()
+            seqs.append(sequence)
+        return headers, seqs
 
-    record = SeqIO.parse(file, 'fasta')
-    global_seq_list = [i.seq for i in record]
+    parsed = fastaParser(file)
+    seq_pair = [parsed[1][0], parsed[1][1]]
 
-    seq_pair = []
-    if len(global_seq_list[0]) == len(global_seq_list[1]):
-        seq_pair = [i for i in global_seq_list]
-        s1, s2, align, idents, gaps, mismatches = runer(seq_pair)
-        print(s1)
-        print(align)
-        print(s2)
-        print(idents, gaps, mismatches)
-
-    else:
-        best_align = []
-        teg = [[global_seq_list[0], len(global_seq_list[0])], [global_seq_list[1], len(global_seq_list[1])]]
-        teg.sort()
-        for i in range(0, teg[1][1] - teg[0][1]):
-            seq_pair = [teg[0][0], teg[1][0][i: i + teg[0][1]]]
-            candidate_align = [i for i in runer(seq_pair)]
-            candidate_align_score = candidate_align[3] * match - candidate_align[4] * gap - candidate_align[5] * mismatch
-            if len(best_align) == 0:
-                best_align = [candidate_align, candidate_align_score]
-            else:
-                if candidate_align_score > best_align[1]:
-                    best_align = [candidate_align, candidate_align_score]
-
-        print(best_align[0][0])
-        print(best_align[0][2])
-        print(best_align[0][1])
-        print(best_align[0][3], best_align[0][4], best_align[0][5])
+    s1, s2, align, idents, gaps, mismatches = runer(seq_pair)
+    print(s1)
+    print(align)
+    print(s2)
+    print(idents, gaps, mismatches)
 
 if __name__ == '__main__':
-    main(file, 2, -1, -1)
+    main(file, 2, -1, -1, method='local')
